@@ -20,6 +20,8 @@ from core import WarpCore
 from core.data import setup_webdataset_path, MultiGetter, MultiFilter, Bucketeer
 from core.utils import EXPECTED, EXPECTED_TRAIN, update_weights_ema, create_folder_if_necessary
 
+from danbooru import db
+
 import webdataset as wds
 from webdataset.handlers import warn_and_continue
 
@@ -55,8 +57,11 @@ class DataCore(WarpCore):
     config: Config
 
     def webdataset_path(self):
-        if isinstance(self.config.webdataset_path, str) and (self.config.webdataset_path.strip().startswith(
-                'pipe:') or self.config.webdataset_path.strip().startswith('file:')):
+        if isinstance(self.config.webdataset_path, str) and (
+            self.config.webdataset_path.strip().startswith('pipe:') or 
+            self.config.webdataset_path.strip().startswith('https:') or
+            self.config.webdataset_path.strip().startswith('file:')
+            ):
             return self.config.webdataset_path
         else:
             dataset_path = self.config.webdataset_path
@@ -83,11 +88,12 @@ class DataCore(WarpCore):
         })
 
         return [
-            ('jpg;png',
+            ('jpg;png;webp',
              torchvision.transforms.ToTensor() if self.config.multi_aspect_ratio is not None else extras.transforms,
              'images'),
-            ('txt', identity, 'captions') if self.config.captions_getter is None else (
-                self.config.captions_getter[0], eval(self.config.captions_getter[1]), 'captions'),
+                ('txt', identity, 'captions') if self.config.captions_getter is None 
+            else (("__key__", db.get_tags, "captions") if self.config.danbooru
+            else (self.config.captions_getter[0], eval(self.config.captions_getter[1]), 'captions')),
         ]
 
     def setup_data(self, extras: Extras) -> WarpCore.Data:

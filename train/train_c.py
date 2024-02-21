@@ -256,11 +256,11 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
 
 if __name__ == '__main__':
     print("Launching Script")
-    warpcore = WurstCore(
+    warpcore = WurstCore.__init__(
         config_file_path=sys.argv[1] if len(sys.argv) > 1 else None,
         device=torch.device(int(os.environ.get("SLURM_LOCALID")))
     )
     # core.fsdp_defaults['sharding_strategy'] = ShardingStrategy.NO_SHARD
 
     # RUN TRAINING
-    warpcore()
+    warpcore.__call__()
