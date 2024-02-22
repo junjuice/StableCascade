@@ -259,12 +259,12 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
         return models.previewer(latents)
 
 
-def run(rank, config_file_path, dataset):
+def run(rank, config_file_path, n_gpu_per_node, dataset=None):
     warpcore = WurstCore(
         config_file_path=config_file_path,
         device=rank
     )
-    warpcore.__call__(rank, False, dataset=dataset)
+    warpcore.__call__(rank, False, n_gpu_per_node=n_gpu_per_node, dataset=dataset)
 
 def main():
     print("Launching Script")
@@ -273,17 +273,13 @@ def main():
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
     config_file_path = sys.argv[1] if len(sys.argv) > 1 else None
-    temp = warpcore = WurstCore(
-        config_file_path=config_file_path,
-        device="cpu"
-    )
-    dataset = temp.setup_data(temp.setup_extras_pre(), dataset_only=True)
+
     # RUN TRAINING
     mp.spawn(
         run,
         (
             sys.argv[1] if len(sys.argv) > 1 else None, 
-            dataset
+            torch.cuda.device_count()
         ),
         nprocs=torch.cuda.device_count(),
     )

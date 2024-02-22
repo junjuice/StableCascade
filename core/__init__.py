@@ -141,20 +141,16 @@ class WarpCore(ABC):
         return self.Config(training=training)
 
     def setup_ddp(self, experiment_id, n_gpu_per_node=torch.cuda.device_count(), slurm=False, rank=None):
+        
         if n_gpu_per_node != 1:
             if slurm:
                 local_rank = int(os.environ.get("SLURM_LOCALID"))
                 process_id = int(os.environ.get("SLURM_PROCID"))
                 world_size = int(os.environ.get("SLURM_NNODES")) * torch.cuda.device_count()
             else:
-                if rank:
-                    local_rank = rank
-                    process_id = rank
-                    world_size = torch.cuda.device_count()
-                else:
-                    local_rank = 0
-                    process_id = 0
-                    world_size = 1
+                local_rank = rank
+                process_id = rank
+                world_size = n_gpu_per_node
                 
             self.process_id = process_id
             self.is_main_node = process_id == 0
@@ -162,8 +158,8 @@ class WarpCore(ABC):
             self.world_size = world_size
 
             dist_file_path = f"{os.getcwd()}/{self.config.dist_file_subfolder}dist_file_{experiment_id}"
-            # if os.path.exists(dist_file_path) and self.is_main_node:
-            #     os.remove(dist_file_path)
+            if os.path.exists(dist_file_path) and self.is_main_node:
+                os.remove(dist_file_path)
 
             torch.cuda.set_device(local_rank)
             init_process_group(
@@ -172,7 +168,7 @@ class WarpCore(ABC):
                 world_size=world_size,
                 init_method=f"file://{dist_file_path}",
             )
-            print(f"[GPU {process_id}] READY")
+            print(f"[GPU {process_id+1}/{world_size}] READY")
         else:
             print("Running in single thread, DDP not enabled.")
 
@@ -298,9 +294,11 @@ class WarpCore(ABC):
         self.config: self.Config = self.setup_config(config_file_path, config_dict, training)
         self.info: self.Info = self.setup_info()
 
-    def __call__(self, rank=0, single_gpu=True, slurm=False, dataset=None):
+    def __call__(self, rank=0, single_gpu=True, n_gpu_per_node=None, slurm=False, dataset=None):
         if single_gpu:
             n_gpu_per_node = 1
+        elif n_gpu_per_node:
+            n_gpu_per_node = n_gpu_per_node
         else:
             n_gpu_per_node = torch.cuda.device_count()
         self.setup_ddp(self.config.experiment_id, n_gpu_per_node=n_gpu_per_node, slurm=slurm, rank=rank)  # this will change the device to the CUDA rank
