@@ -142,8 +142,6 @@ class WarpCore(ABC):
 
     def setup_ddp(self, experiment_id, n_gpu_per_node=torch.cuda.device_count(), slurm=False, rank=None):
         if n_gpu_per_node != 1:
-            os.environ['MASTER_ADDR'] = 'localhost'
-            os.environ['MASTER_PORT'] = '12355'
             if slurm:
                 local_rank = int(os.environ.get("SLURM_LOCALID"))
                 process_id = int(os.environ.get("SLURM_PROCID"))
@@ -300,9 +298,11 @@ class WarpCore(ABC):
         self.config: self.Config = self.setup_config(config_file_path, config_dict, training)
         self.info: self.Info = self.setup_info()
 
-    def __call__(self, rank=0, single_gpu=True, slurm=False):
+    def __call__(self, rank=0, single_gpu=True, slurm=False, dataset=None):
         if single_gpu:
             n_gpu_per_node = 1
+        else:
+            n_gpu_per_node = torch.cuda.device_count()
         self.setup_ddp(self.config.experiment_id, n_gpu_per_node=n_gpu_per_node, slurm=slurm, rank=rank)  # this will change the device to the CUDA rank
         self.setup_wandb()
         if self.config.allow_tf32:
@@ -324,7 +324,7 @@ class WarpCore(ABC):
         extras = self.setup_extras_pre()
         assert extras is not None, "setup_extras_pre() must return a DTO"
 
-        data = self.setup_data(extras)
+        data = self.setup_data(extras, dataset)
         assert data is not None, "setup_data() must return a DTO"
         if self.is_main_node:
             print("**DATA:**")

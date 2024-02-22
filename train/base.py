@@ -23,11 +23,23 @@ from core.utils import EXPECTED, EXPECTED_TRAIN, update_weights_ema, create_fold
 from danbooru import db
 
 import webdataset as wds
-from webdataset.handlers import warn_and_continue
+from webdataset.handlers import warn_and_continue as handler
 
 import transformers
 transformers.utils.logging.set_verbosity_error()
 
+def identity(x):
+    return x
+
+def true(x):
+    return True
+    
+class MapFn:
+    def __init__(self, preprocessors):
+        self.preprocessors = preprocessors
+
+    def __call__(self, x):
+        return {p[2]: x[i] for i, p in enumerate(self.preprocessors)}
 
 class DataCore(WarpCore):
     @dataclass(frozen=True)
@@ -93,28 +105,31 @@ class DataCore(WarpCore):
             ("__key__", db.get_tags, "captions")
         ]
 
-    def setup_data(self, extras: Extras) -> WarpCore.Data:
+    def setup_data(self, extras: Extras, dataset=None, dataset_only=False) -> WarpCore.Data:
         # SETUP DATASET
         dataset_path = self.webdataset_path()
         preprocessors = self.webdataset_preprocessors(extras)
 
-        handler = warn_and_continue
-        dataset = wds.WebDataset(
-            dataset_path, resampled=True, handler=handler
-        ).select(
-            MultiFilter(rules={
-                f[0]: eval(f[1]) for f in self.config.dataset_filters
-            }) if self.config.dataset_filters is not None else lambda _: True
-        ).shuffle(690, handler=handler).decode(
-            "pilrgb", handler=handler
-        ).to_tuple(
-            *[p[0] for p in preprocessors], handler=handler
-        ).map_tuple(
-            *[p[1] for p in preprocessors], handler=handler
-        ).map(lambda x: {p[2]: x[i] for i, p in enumerate(preprocessors)})
+        if not dataset:
+            map_fn = MapFn(preprocessors)
+            dataset = wds.WebDataset(
+                dataset_path, resampled=True, handler=handler
+            ).select(
+                MultiFilter(rules={
+                    f[0]: eval(f[1]) for f in self.config.dataset_filters
+                }) if self.config.dataset_filters is not None else true
+            ).shuffle(690, handler=handler).decode(
+                "pilrgb", handler=handler
+            ).to_tuple(
+                *[p[0] for p in preprocessors], handler=handler
+            ).map_tuple(
+                *[p[1] for p in preprocessors], handler=handler
+            ).map(map_fn)
 
-        def identity(x):
-            return x
+            if dataset_only:
+                return dataset
+
+ 
 
         # SETUP DATALOADER
         real_batch_size = self.config.batch_size // (self.world_size * self.config.grad_accum_steps)

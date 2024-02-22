@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from gdf import GDF, EpsilonTarget, CosineSchedule
 from gdf import VPScaler, CosineTNoiseCond, DDPMSampler, P2LossWeight, AdaptiveLossWeight
+from danbooru import db
 from torchtools.transforms import SmartCrop
 
 from modules.effnet import EfficientNetEncoder
@@ -258,19 +259,34 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
         return models.previewer(latents)
 
 
+def run(rank, config_file_path, dataset):
+    warpcore = WurstCore(
+        config_file_path=config_file_path,
+        device=rank
+    )
+    warpcore.__call__(rank, False, dataset=dataset)
+
 def main():
     print("Launching Script")
-    warpcore = WurstCore(
-        config_file_path=sys.argv[1] if len(sys.argv) > 1 else None,
-        device="cuda"
+    db.setup()
+    os.environ["NCCL_DEBUG"] = "INFO"
+    os.environ['MASTER_ADDR'] = 'localhost'
+    os.environ['MASTER_PORT'] = '12355'
+    config_file_path = sys.argv[1] if len(sys.argv) > 1 else None
+    temp = warpcore = WurstCore(
+        config_file_path=config_file_path,
+        device="cpu"
     )
-
+    dataset = temp.setup_data(temp.setup_extras_pre(), dataset_only=True)
     # RUN TRAINING
     mp.spawn(
-        warpcore.__call__,
+        run,
         (
-            False,
-            False
+            sys.argv[1] if len(sys.argv) > 1 else None, 
+            dataset
         ),
         nprocs=torch.cuda.device_count(),
     )
+
+if __name__ == "__main__":
+    main()
