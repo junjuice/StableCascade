@@ -140,12 +140,24 @@ class WarpCore(ABC):
             return self.Config.from_dict({**config_dict, 'training': training})
         return self.Config(training=training)
 
-    def setup_ddp(self, experiment_id, single_gpu=False):
-        if not single_gpu:
-            local_rank = int(os.environ.get("SLURM_LOCALID"))
-            process_id = int(os.environ.get("SLURM_PROCID"))
-            world_size = int(os.environ.get("SLURM_NNODES")) * torch.cuda.device_count()
-
+    def setup_ddp(self, experiment_id, n_gpu_per_node=torch.cuda.device_count(), slurm=False, rank=None):
+        if n_gpu_per_node != 1:
+            os.environ['MASTER_ADDR'] = 'localhost'
+            os.environ['MASTER_PORT'] = '12355'
+            if slurm:
+                local_rank = int(os.environ.get("SLURM_LOCALID"))
+                process_id = int(os.environ.get("SLURM_PROCID"))
+                world_size = int(os.environ.get("SLURM_NNODES")) * torch.cuda.device_count()
+            else:
+                if rank:
+                    local_rank = rank
+                    process_id = rank
+                    world_size = torch.cuda.device_count()
+                else:
+                    local_rank = 0
+                    process_id = 0
+                    world_size = 1
+                
             self.process_id = process_id
             self.is_main_node = process_id == 0
             self.device = torch.device(local_rank)
@@ -288,8 +300,10 @@ class WarpCore(ABC):
         self.config: self.Config = self.setup_config(config_file_path, config_dict, training)
         self.info: self.Info = self.setup_info()
 
-    def __call__(self, single_gpu=False):
-        self.setup_ddp(self.config.experiment_id, single_gpu=single_gpu)  # this will change the device to the CUDA rank
+    def __call__(self, rank=0, single_gpu=True, slurm=False):
+        if single_gpu:
+            n_gpu_per_node = 1
+        self.setup_ddp(self.config.experiment_id, n_gpu_per_node=n_gpu_per_node, slurm=slurm, rank=rank)  # this will change the device to the CUDA rank
         self.setup_wandb()
         if self.config.allow_tf32:
             torch.backends.cuda.matmul.allow_tf32 = True

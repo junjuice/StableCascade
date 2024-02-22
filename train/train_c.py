@@ -24,9 +24,11 @@ from core.utils import EXPECTED, EXPECTED_TRAIN, load_or_fail
 
 from torch.distributed.fsdp import FullyShardedDataParallel as FSDP
 from torch.distributed.fsdp.wrap import ModuleWrapPolicy
+import torch.multiprocessing as mp
 from accelerate import init_empty_weights
 from accelerate.utils import set_module_tensor_to_device
 from contextlib import contextmanager
+
 
 class WurstCore(TrainingCore, DataCore, WarpCore):
     @dataclass(frozen=True)
@@ -205,6 +207,8 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
     # Training loop --------------------------------
     def forward_pass(self, data: WarpCore.Data, extras: Extras, models: Models):
         batch = next(data.iterator)
+        B, C, W, H = batch["images"].shape
+        self.last_shape = (W, H)
 
         with torch.no_grad():
             conditions = self.get_conditions(batch, models, extras)
@@ -254,14 +258,19 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
         return models.previewer(latents)
 
 
-if __name__ == '__main__':
+def main():
     print("Launching Script")
     warpcore = WurstCore(
         config_file_path=sys.argv[1] if len(sys.argv) > 1 else None,
         device="cuda"
-        #device=torch.device(int(os.environ.get("SLURM_LOCALID")))
     )
-    # core.fsdp_defaults['sharding_strategy'] = ShardingStrategy.NO_SHARD
 
     # RUN TRAINING
-    warpcore.__call__(single_gpu=True)
+    mp.spawn(
+        warpcore.__call__,
+        (
+            False,
+            False
+        ),
+        nprocs=torch.cuda.device_count(),
+    )

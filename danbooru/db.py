@@ -198,11 +198,37 @@ def setup(path="danbooru2023.db"):
         download("https://huggingface.co/datasets/KBlueLeaf/danbooru2023-sqlite/resolve/main/danbooru2023.db", path)
     load_db("danbooru2023.db")
 
-def get_tags(id, ignore: list[str] = [], formatting: bool=True):
+def get_quality_tag(score: int):
+    if score > 150:
+        return "masterpiece"
+    elif score > 100:
+        return "best quality"
+    elif score > 75:
+        return "high quality"
+    elif score > 25:
+        return "medium quality"
+    elif score > 0:
+        return None
+    elif score > -5:
+        return "low quality"
+    else:
+        return "worst quality"
+
+def get_tags(id, ignore: list[str] = [], formatting: bool=True, quality: bool=True):
     id = int(id)
-    post = Post.get_by_id(id)
+    try:
+        post: Post = Post.get_by_id(id)
+    except:
+        if formatting:
+            return ""
+        else:
+            [""]
     tags_raw = [x.name for x in post.tag_list_general + post.tag_list_artist + post.tag_list_character]
-    tags = []
+    quality_tag = get_quality_tag(post.score)
+    if quality_tag and quality:
+        tags = [quality_tag, ]
+    else:
+        tags = []
     for tag in tags_raw:
         if not tag in ignore:
             tags.append(tag)

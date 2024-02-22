@@ -86,14 +86,11 @@ class DataCore(WarpCore):
         captions_getter = MultiGetter(rules={
             ('old_caption', 'caption'): lambda oc, c: get_caption(json.loads(oc)['og_caption'], c, p_og=0.05)
         })
+        db.setup()
 
         return [
-            ('jpg;png;webp',
-             torchvision.transforms.ToTensor() if self.config.multi_aspect_ratio is not None else extras.transforms,
-             'images'),
-                ('txt', identity, 'captions') if self.config.captions_getter is None 
-            else (("__key__", db.get_tags, "captions") if self.config.danbooru
-            else (self.config.captions_getter[0], eval(self.config.captions_getter[1]), 'captions')),
+            ('jpg;png;webp', torchvision.transforms.ToTensor() if self.config.multi_aspect_ratio is not None else extras.transforms, 'images'),
+            ("__key__", db.get_tags, "captions")
         ]
 
     def setup_data(self, extras: Extras) -> WarpCore.Data:
@@ -291,6 +288,7 @@ class TrainingCore(DataCore, WarpCore):
                     'grad_norm': grad_norm.item(),
                     'lr': optimizers.generator.param_groups[0]['lr'] if optimizers.generator is not None else 0,
                     'total_steps': self.info.total_steps,
+                    "shape": self.last_shape
                 }
 
                 pbar.set_postfix(logs)
@@ -316,7 +314,8 @@ class TrainingCore(DataCore, WarpCore):
                     self.sample(models, data, extras)
 
     def save_checkpoints(self, models: Models, optimizers: Optimizers, suffix=None):
-        barrier()
+        if self.world_size != 1:
+            barrier()
         suffix = '' if suffix is None else suffix
         self.save_info(self.info, suffix=suffix)
         models_dict = models.to_dict()
