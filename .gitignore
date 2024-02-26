@@ -11,3 +11,5 @@ jobs/*.sh
 *.safetensors
 *_test.yaml
 venv
+cache/*
+*.ckpt

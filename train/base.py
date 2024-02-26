@@ -98,7 +98,6 @@ class DataCore(WarpCore):
         captions_getter = MultiGetter(rules={
             ('old_caption', 'caption'): lambda oc, c: get_caption(json.loads(oc)['og_caption'], c, p_og=0.05)
         })
-        db.setup()
 
         return [
             ('jpg;png;webp', torchvision.transforms.ToTensor() if self.config.multi_aspect_ratio is not None else extras.transforms, 'images'),
@@ -108,6 +107,7 @@ class DataCore(WarpCore):
     def setup_data(self, extras: Extras, dataset=None, dataset_only=False) -> WarpCore.Data:
         # SETUP DATASET
         dataset_path = self.webdataset_path()
+        db.setup()
         preprocessors = self.webdataset_preprocessors(extras)
 
         if not dataset:
@@ -162,18 +162,23 @@ class DataCore(WarpCore):
         text_embeddings = None
         text_pooled_embeddings = None
         if 'clip_text' in return_fields or 'clip_text_pooled' in return_fields:
-            if is_eval:
-                if is_unconditional:
-                    captions_unpooled = ["" for _ in range(batch_size)]
-                else:
-                    captions_unpooled = captions
+            if getattr(self, "uncond_cache", None) and is_unconditional:
+                text_encoder_output = self.uncond_cache
             else:
-                rand_idx = np.random.rand(batch_size) > 0.05
-                captions_unpooled = [str(c) if keep else "" for c, keep in zip(captions, rand_idx)]
-            clip_tokens_unpooled = models.tokenizer(captions_unpooled, truncation=True, padding="max_length",
-                                                    max_length=models.tokenizer.model_max_length,
-                                                    return_tensors="pt").to(self.device)
-            text_encoder_output = models.text_model(**clip_tokens_unpooled, output_hidden_states=True)
+                if is_eval:
+                    if is_unconditional:
+                        captions_unpooled = ["" for _ in range(batch_size)]
+                    else:
+                        captions_unpooled = captions
+                else:
+                    rand_idx = np.random.rand(batch_size) > 0.05
+                    captions_unpooled = [str(c) if keep else "" for c, keep in zip(captions, rand_idx)]
+                clip_tokens_unpooled = models.tokenizer(captions_unpooled, truncation=True, padding="max_length",
+                                                        max_length=models.tokenizer.model_max_length,
+                                                        return_tensors="pt").to(self.device)
+                text_encoder_output = models.text_model(**clip_tokens_unpooled, output_hidden_states=True)
+                if is_unconditional:
+                    self.uncond_cache = text_encoder_output
             if 'clip_text' in return_fields:
                 text_embeddings = text_encoder_output.hidden_states[-1]
             if 'clip_text_pooled' in return_fields:
