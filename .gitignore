@@ -13,3 +13,5 @@ jobs/*.sh
 venv
 cache/*
 *.ckpt
+*.pt
+test.jpg
