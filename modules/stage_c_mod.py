@@ -200,11 +200,11 @@ class StageCTransformer(nn.Module):
         return clip
         
     def forward(self, x: torch.Tensor, r: torch.Tensor, text_emb: torch.Tensor, text_emb_pooled: torch.Tensor, vision_emb_pooled: torch.Tensor):
-        B, C, H, W = x.shape
+        B, C, W, H = x.shape
 
         emb = self.gen_c_embeddings(text_emb, text_emb_pooled, vision_emb_pooled)
         emb = self.dropout1d(emb)
         patches = self.embedder(x, r)
         patches = self.decoder.forward(x=patches, context=emb, return_embeddings=True)
-        x = self.final(patches, (H, W))
+        x = self.final(patches, (W, H))
         return x
