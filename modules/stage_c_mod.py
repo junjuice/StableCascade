@@ -90,7 +90,6 @@ class LatentEncoder(nn.Module):
         print(x.shape)
         for i in range(H//self.patch_size):
             for j in range(W//self.patch_size):
-                print("({}, {})".format(i, j))
                 y += [x[:, i, j, :], ]
             y += [self.nl.repeat(B, 1), ]
         del y[-1]
@@ -190,11 +189,11 @@ class StageCTransformer(nn.Module):
     def gen_c_embeddings(self, clip_txt, clip_txt_pooled, clip_img):
         clip_txt = self.text_projection(clip_txt)
         if len(clip_txt_pooled.shape) == 2:
-            clip_txt_pool = clip_txt_pooled.unsqueeze(1)
+            clip_txt_pooled = clip_txt_pooled.unsqueeze(1)
         if len(clip_img.shape) == 2:
             clip_img = clip_img.unsqueeze(1)
-        clip_txt_pool = self.text_pooled_projection(clip_txt_pooled).view(clip_txt_pooled.size(0), clip_txt_pooled.size(1) * self.c_clip_seq, -1)
-        clip_img = self.vision_pooled_projection(clip_img).view(clip_img.size(0), clip_img.size(1) * self.c_clip_seq, -1)
+        clip_txt_pool = self.text_pooled_projection(clip_txt_pooled).view(clip_txt_pooled.size(0), clip_txt_pooled.size(1) * self.owl_seq, -1)
+        clip_img = self.vision_pooled_projection(clip_img).view(clip_img.size(0), clip_img.size(1) * self.owl_seq, -1)
         clip = torch.cat([clip_txt, clip_txt_pool, clip_img], dim=1)
         clip = self.owl_norm(clip)
         return clip
