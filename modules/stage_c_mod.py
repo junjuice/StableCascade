@@ -51,7 +51,7 @@ class TimestepEmbedder(nn.Module):
         return emb
 
 
-class ImageEmbedder(nn.Module):
+class LatentEncoder(nn.Module):
     def __init__(self, in_dim: int, out_dim: int, patch_size: int, expand_size: int = 0):
         super().__init__()
 
@@ -67,13 +67,12 @@ class ImageEmbedder(nn.Module):
         self.conv = nn.Conv2d(
             in_channels = self.in_dim,
             out_channels= self.out_dim,
-            kernel_size = self.patch_size+self.expand_size,
+            kernel_size = self.patch_size+self.expand_size*2,
             stride = self.patch_size,
-            padding = self.expand_size//2,
+            padding = self.expand_size,
             bias = False
         )
         self.out_norm = nn.BatchNorm2d(num_features=self.out_dim)
-        self.padding = nn.ZeroPad2d((0, 0))
         self.temb = TimestepEmbedder(self.out_dim)
         self.ln = nn.LayerNorm(self.out_dim)
 
@@ -81,11 +80,6 @@ class ImageEmbedder(nn.Module):
         B, C, H, W = x.shape
         if len(t.shape) == 1:
             t = t.repeat(B, 1)
-        pad_size = ((self.patch_size - (H % self.patch_size)) % self.patch_size, 
-                    (self.patch_size - (W % self.patch_size)) % self.patch_size)
-        if self.padding.padding == nn.modules.padding._quadruple(pad_size):
-            self.padding = nn.ZeroPad2d(pad_size)
-        x = self.padding(x)
         B, C, H, W = x.shape
         x = self.in_norm(x)
         x = self.conv(x)
@@ -93,8 +87,10 @@ class ImageEmbedder(nn.Module):
         x = x.transpose(2, 3).transpose(1, 3)
 
         y = [self.temb(t), self.soi.repeat(B, 1), ]
+        print(x.shape)
         for i in range(H//self.patch_size):
             for j in range(W//self.patch_size):
+                print("({}, {})".format(i, j))
                 y += [x[:, i, j, :], ]
             y += [self.nl.repeat(B, 1), ]
         del y[-1]
@@ -105,7 +101,7 @@ class ImageEmbedder(nn.Module):
         return x
     
     
-class ImageDecoder(nn.Module):
+class LatentDecoder(nn.Module):
     def __init__(self, in_dim, hidden_dim, patch_size):
         super().__init__()
         self.in_dim = in_dim
@@ -139,6 +135,8 @@ class StageCTransformer(nn.Module):
     def __init__(self, 
                  in_dim: int = 16, 
                  hidden_dim: int = 2048, 
+                 owl_text_dim: int = 512,
+                 owl_vision_dim: int = 768,
                  patch_size: int = 2, 
                  patch_expand_size: int = 1, 
                  max_size: int = 64,
@@ -150,18 +148,25 @@ class StageCTransformer(nn.Module):
 
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
+        self.owl_dim = {"text": owl_text_dim, "vision": owl_vision_dim}
         self.patch_size = patch_size
         self.patch_expand_size = patch_expand_size
         self.max_size = max_size
         self.depth = depth
         self.num_heads = num_heads
 
-        self.embedder = ImageEmbedder(in_dim=self.in_dim, out_dim=self.hidden_dim, patch_size=self.patch_size, expand_size=self.patch_expand_size)
-        self.projection = nn.Sequential(
-                                nn.LazyLinear(self.hidden_dim), 
-                                nn.LayerNorm(self.hidden_dim)
-                                )
-        self.dropout = nn.Dropout1d(dropout)
+        self.embedder = LatentEncoder(in_dim=self.in_dim, out_dim=self.hidden_dim, patch_size=self.patch_size, expand_size=self.patch_expand_size)
+        self.projection = nn.ModuleDict(
+            {"text": nn.Sequential(
+                nn.Linear(self.owl_dim["text"], self.hidden_dim), 
+                nn.LayerNorm(self.hidden_dim)
+                ),
+            "vision": nn.Sequential(
+                nn.Linear(self.owl_dim["vision"], self.hidden_dim), 
+                nn.LayerNorm(self.hidden_dim)
+            )
+            })
+        self.dropout1d = nn.Dropout1d(dropout)
         self.decoder = x_transformers.TransformerWrapper(
             num_tokens = 1000, 
             max_seq_len = (self.max_size ** 2 + self.max_size + 2), 
@@ -174,14 +179,14 @@ class StageCTransformer(nn.Module):
             )
         )
         self.decoder.token_emb = nn.Identity()
-        self.final = ImageDecoder(self.in_dim, self.hidden_dim, self.patch_size)
+        self.final = LatentDecoder(self.in_dim, self.hidden_dim, self.patch_size)
         
     def forward(self, x: torch.Tensor, r: torch.Tensor, text_emb: torch.Tensor):
         B, C, H, W = x.shape
 
-        text_emb = self.projection(text_emb)
-        text_emb = self.dropout(text_emb)
+        text_emb = self.projection["text"](text_emb)
+        text_emb = self.dropout1d(text_emb)
         patches = self.embedder(x, r)
-        patches = self.decoder(x=patches, context=text_emb, return_embeddings=True)
+        patches = self.decoder.forward(x=patches, context=text_emb, return_embeddings=True)
         x = self.final(patches, (H, W))
         return x

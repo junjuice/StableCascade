@@ -1,7 +1,7 @@
 import torch
 import torchvision
 from torch import nn, optim
-from transformers import AutoTokenizer, CLIPTextModelWithProjection, CLIPVisionModelWithProjection, Owlv2TextModel, Owlv2VisionModel
+from transformers import AutoTokenizer, Owlv2TextModel, Owlv2VisionModel
 from warmup_scheduler import GradualWarmupScheduler
 
 import sys
