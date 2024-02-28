@@ -3,6 +3,8 @@ import os
 import requests
 import tqdm
 from peewee import *
+import torch
+import typing
 
 
 def download(url: str, fname: str, chunk_size=1024):
@@ -183,7 +185,8 @@ class PostTagRelation(BaseModel):
 
 tags = ManyToManyField(Tag, backref="_posts", through_model=PostTagRelation)
 tags.bind(Post, "_tags", set_attribute=True)
-
+embeds = None
+keys = []
 
 def load_db(db_file: str):
     global db
@@ -193,10 +196,16 @@ def load_db(db_file: str):
     PostTagRelation._meta.database = db
     db.connect()
 
-def setup(path="danbooru2023.db"):
+def setup(path="danbooru2023.db", embedding="embed.pt"):
     if not os.path.isfile(path):
         download("https://huggingface.co/datasets/KBlueLeaf/danbooru2023-sqlite/resolve/main/danbooru2023.db", path)
+    if not os.path.isfile(embedding):
+        download("https://huggingface.co/junjuice0/test/resolve/main/embeds.pt", embedding)
     load_db("danbooru2023.db")
+    global embeds, keys
+    embeds: typing.OrderedDict = torch.load(embedding)
+    keys = list(embeds.keys())
+
 
 def get_quality_tag(score: int):
     if score > 150:
@@ -214,7 +223,7 @@ def get_quality_tag(score: int):
     else:
         return "worst quality"
 
-def get_tags(id, ignore: list[str] = [], formatting: bool=True, quality: bool=True):
+def get_tags(id, embedding: bool=False, formatting: bool=True, quality: bool=True, ignore: list[str] = []):
     id = int(id)
     try:
         post: Post = Post.get_by_id(id)
@@ -223,12 +232,18 @@ def get_tags(id, ignore: list[str] = [], formatting: bool=True, quality: bool=Tr
             return ""
         else:
             [""]
-    tags_raw = [x.name for x in post.tag_list_general + post.tag_list_artist + post.tag_list_character]
+    tags_raw = [x.name for x in post.tag_list_general + post.tag_list_character]
     quality_tag = get_quality_tag(post.score)
     if quality_tag and quality:
-        tags = [quality_tag, ]
+        tags = [embeds[quality_tag].unsqueeze(dim=0), ]
     else:
         tags = []
+    if embedding:
+        global embeds
+        for tag in tags_raw:
+            if tag in keys():
+                tags.append(embeds[tag].unsqueeze(dim=0))
+            return torch.cat(tags, dim=0)
     for tag in tags_raw:
         if not tag in ignore:
             tags.append(tag)
