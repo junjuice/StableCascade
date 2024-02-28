@@ -264,6 +264,9 @@ def get_tags(id, embedding: bool=False, formatting: bool=True, quality: bool=Tru
             return tag_str
         else:
             return tags
+        
+def get_embeddings(id: int):
+    return get_tags(id, True)
     
 def get_size(id: int):
     post = Post.get_by_id(id)

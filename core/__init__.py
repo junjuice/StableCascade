@@ -295,12 +295,13 @@ class WarpCore(ABC):
         self.info: self.Info = self.setup_info()
 
     def __call__(self, rank=0, single_gpu=True, n_gpu_per_node=None, slurm=False, dataset=None):
+        self.rank = rank
         if single_gpu:
-            n_gpu_per_node = 1
+            self.n_gpu_per_node = 1
         elif n_gpu_per_node:
-            n_gpu_per_node = n_gpu_per_node
+            self.n_gpu_per_node = n_gpu_per_node
         else:
-            n_gpu_per_node = torch.cuda.device_count()
+            self.n_gpu_per_node = torch.cuda.device_count()
         self.setup_ddp(self.config.experiment_id, n_gpu_per_node=n_gpu_per_node, slurm=slurm, rank=rank)  # this will change the device to the CUDA rank
         self.setup_wandb()
         if self.config.allow_tf32:

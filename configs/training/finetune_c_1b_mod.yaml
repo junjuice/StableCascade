@@ -27,6 +27,6 @@ adaptive_loss_weight: True
 # ema_iters: 100
 # ema_beta: 0.9
 
-webdataset_path: https://huggingface.co/datasets/KBlueLeaf/danbooru2023-webp-2Mpixel/resolve/main/images/data-{0000..1127}.tar
+webdataset_path: https://huggingface.co/datasets/KBlueLeaf/danbooru2023-webp-2Mpixel/resolve/main/images/data-{}.tar
 effnet_checkpoint_path: models/effnet_encoder.safetensors
 previewer_checkpoint_path: models/previewer.safetensors

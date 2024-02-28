@@ -116,68 +116,28 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             clip_preprocess=clip_preprocess
         )
     
-    def _get_conditions(self, batch: dict, models: Models, extras: Extras, is_eval=False, is_unconditional=False,
-                       eval_image_embeds=False, return_fields=None):
-        if return_fields is None:
-            return_fields = ['clip_text', 'clip_text_pooled', 'clip_img']
-
-        captions = batch.get('captions', None)
-        images = batch.get('images', None)
-        batch_size = len(captions)
-
-        text_embeddings = None
-        text_pooled_embeddings = None
-        if 'clip_text' in return_fields or 'clip_text_pooled' in return_fields:
-            if getattr(self, "uncond_cache", None) and is_unconditional:
-                text_encoder_output = self.uncond_cache
-            else:
-                if is_eval:
-                    if is_unconditional:
-                        captions_unpooled = ["" for _ in range(batch_size)]
-                    else:
-                        captions_unpooled = captions
-                else:
-                    rand_idx = np.random.rand(batch_size) > 0.05
-                    captions_unpooled = [str(c) if keep else "" for c, keep in zip(captions, rand_idx)]
-                clip_tokens_unpooled = models.tokenizer(captions_unpooled, truncation=True, padding="max_length",
-                                                        max_length=models.tokenizer.model_max_length,
-                                                        return_tensors="pt").to(self.device)
-                text_encoder_output: modeling_outputs.BaseModelOutputWithPooling = models.text_model(**clip_tokens_unpooled, output_hidden_states=True)
-                if is_unconditional:
-                    self.uncond_cache = text_encoder_output
-            if 'clip_text' in return_fields:
-                text_embeddings = text_encoder_output.last_hidden_state
-            if 'clip_text_pooled' in return_fields:
-                text_pooled_embeddings = text_encoder_output.pooler_output.unsqueeze(1)
-
-        image_embeddings = None
-        if 'clip_img' in return_fields:
-            image_embeddings = torch.zeros(batch_size, 768, device=self.device)
-            if images is not None:
-                images = images.to(self.device)
-                if is_eval:
-                    if not is_unconditional and eval_image_embeds:
-                        image_encoder_output = models.image_model(extras.clip_preprocess(images))
-                        image_embeddings = image_encoder_output.pooler_output
-                else:
-                    rand_idx = np.random.rand(batch_size) > 0.9
-                    if any(rand_idx):
-                        image_encoder_output: modeling_outputs.BaseModelOutputWithPooling = models.image_model(extras.clip_preprocess(images[rand_idx]))
-                        image_embeddings[rand_idx] = image_encoder_output.pooler_output
-            image_embeddings = image_embeddings.unsqueeze(1)
-        return {
-            'clip_text': text_embeddings,
-            'clip_text_pooled': text_pooled_embeddings,
-            'clip_img': image_embeddings
-        }
+    def webdataset_path(self):
+        webdataset_paths = [self.config.webdataset_path.format(str(i).rjust(4, "0")) for i in range(1128)]
+        if not self.config.use_fsdp:
+            base_size = 1127//self.n_gpu_per_node
+            webdataset_paths = webdataset_paths[self.rank*base_size:(self.rank+1)*base_size]
+        return self.config.webdataset_path
+    
+    def webdataset_preprocessors(self, extras: Extras):
+        return [
+            ('jpg;png;webp', torchvision.transforms.ToTensor() if self.config.multi_aspect_ratio is not None else extras.transforms, 'images'),
+            ("__key__", db.get_tags, "captions"),
+            ("__key__", db.get_embeddings, "embeddings")
+        ]
 
     def get_conditions(self, batch: dict, models: Models, extras: Extras, is_eval=False, is_unconditional=False,
                        eval_image_embeds=False, return_fields=None):
-        conditions = self._get_conditions(
-            batch, models, extras, is_eval, is_unconditional,
-            eval_image_embeds, return_fields=return_fields or ['clip_text', 'clip_text_pooled', 'clip_img']
-        )
-        return conditions
+        if is_unconditional:
+            embeddings = db.owl_embeds["uncond"].expand((len(batch["embeddings"]), 512))
+        else:
+            embeddings = batch["embeddings"]
+            embeddings = torch.nn.utils.rnn.pad_sequence(embeddings, batch_first=True, padding_value=0.)
+        return embeddings
 
     def setup_models(self, extras: Extras) -> Models:
         dtype = getattr(torch, self.config.dtype) if self.config.dtype else torch.float32
@@ -278,7 +238,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             noised, noise, target, logSNR, noise_cond, loss_weight = extras.gdf.diffuse(latents, shift=1, loss_shift=1)
 
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            pred = models.generator(noised, noise_cond, **conditions)
+            pred = models.generator(noised, noise_cond, conditions)
             loss = nn.functional.mse_loss(pred, target, reduction='none').mean(dim=[1, 2, 3])
             loss_adjusted = (loss * loss_weight).mean() / self.config.grad_accum_steps
 

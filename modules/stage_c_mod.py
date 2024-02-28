@@ -157,16 +157,6 @@ class StageCTransformer(nn.Module):
         self.num_heads = num_heads
 
         self.embedder = LatentEncoder(in_dim=self.in_dim, out_dim=self.hidden_dim, patch_size=self.patch_size, expand_size=self.patch_expand_size)
-        self.projection = nn.ModuleDict(
-            {"text": nn.Sequential(
-                nn.Linear(self.owl_dim["text"], self.hidden_dim), 
-                nn.LayerNorm(self.hidden_dim)
-                ),
-            "vision": nn.Sequential(
-                nn.Linear(self.owl_dim["vision"], self.hidden_dim), 
-                nn.LayerNorm(self.hidden_dim)
-            )
-            })
         self.dropout1d = nn.Dropout1d(dropout)
         self.decoder = x_transformers.TransformerWrapper(
             num_tokens = 1000, 
@@ -182,24 +172,16 @@ class StageCTransformer(nn.Module):
         self.decoder.token_emb = nn.Identity()
         self.final = LatentDecoder(self.in_dim, self.hidden_dim, self.patch_size)
         self.text_projection = nn.Linear(self.owl_dim["text"], self.hidden_dim)
-        self.vision_pooled_projection = nn.Linear(self.owl_dim["vision"], self.hidden_dim*self.owl_seq)
         self.owl_norm = nn.LayerNorm(self.hidden_dim, elementwise_affine=False, eps=1e-6)
-
-    def gen_c_embeddings(self, clip_txt, clip_txt_pooled, clip_img):
-        clip_txt = self.text_projection(clip_txt)
-        if len(clip_img.shape) == 2:
-            clip_img = clip_img.unsqueeze(1)
-        clip_img = self.vision_pooled_projection(clip_img).view(clip_img.size(0), clip_img.size(1) * self.owl_seq, -1)
-        clip = torch.cat([clip_txt, clip_img], dim=1)
-        clip = self.owl_norm(clip)
-        return clip
         
-    def forward(self, x: torch.Tensor, r: torch.Tensor, text_emb: torch.Tensor, vision_emb_pooled: torch.Tensor):
+    def forward(self, x: torch.Tensor, r: torch.Tensor, text_emb: torch.Tensor):
         B, C, W, H = x.shape
 
-        emb = self.gen_c_embeddings(text_emb, vision_emb_pooled)
+        emb = self.text_projection(text_emb)
         emb = self.dropout1d(emb)
+        emb = self.owl_norm(emb)
+        mask = (torch.zeros_like(emb[0, 0, :]) == emb) == False
         patches = self.embedder(x, r)
-        patches = self.decoder.forward(x=patches, context=emb, return_embeddings=True)
+        patches = self.decoder.forward(x=patches, context=emb, context_mask=mask, return_embeddings=True)
         x = self.final(patches, (W, H))
         return x
