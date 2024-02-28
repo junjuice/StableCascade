@@ -1,7 +1,7 @@
 import torch
 import torchvision
 from torch import nn, optim
-from transformers import AutoTokenizer, Owlv2TextModel, Owlv2VisionModel
+from transformers import AutoTokenizer, Owlv2TextModel, Owlv2VisionModel, modeling_outputs
 from warmup_scheduler import GradualWarmupScheduler
 
 import sys
@@ -142,13 +142,13 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
                 clip_tokens_unpooled = models.tokenizer(captions_unpooled, truncation=True, padding="max_length",
                                                         max_length=models.tokenizer.model_max_length,
                                                         return_tensors="pt").to(self.device)
-                text_encoder_output = models.text_model(**clip_tokens_unpooled, output_hidden_states=True)
+                text_encoder_output: modeling_outputs.BaseModelOutputWithPooling = models.text_model(**clip_tokens_unpooled, output_hidden_states=True)
                 if is_unconditional:
                     self.uncond_cache = text_encoder_output
             if 'clip_text' in return_fields:
-                text_embeddings = text_encoder_output.hidden_states[-1]
+                text_embeddings = text_encoder_output.last_hidden_state
             if 'clip_text_pooled' in return_fields:
-                text_pooled_embeddings = text_encoder_output.text_embeds.unsqueeze(1)
+                text_pooled_embeddings = text_encoder_output.pooler_output.unsqueeze(1)
 
         image_embeddings = None
         if 'clip_img' in return_fields:
@@ -157,11 +157,13 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
                 images = images.to(self.device)
                 if is_eval:
                     if not is_unconditional and eval_image_embeds:
-                        image_embeddings = models.image_model(extras.clip_preprocess(images)).image_embeds
+                        image_encoder_output = models.image_model(extras.clip_preprocess(images))
+                        image_embeddings = image_encoder_output.pooler_output
                 else:
                     rand_idx = np.random.rand(batch_size) > 0.9
                     if any(rand_idx):
-                        image_embeddings[rand_idx] = models.image_model(extras.clip_preprocess(images[rand_idx])).image_embeds
+                        image_encoder_output: modeling_outputs.BaseModelOutputWithPooling = models.image_model(extras.clip_preprocess(images[rand_idx]))
+                        image_embeddings[rand_idx] = image_encoder_output.pooler_output
             image_embeddings = image_embeddings.unsqueeze(1)
         return {
             'clip_text': text_embeddings,
@@ -211,7 +213,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
                 generator = StageC(c_cond=1536, c_hidden=[1536, 1536], nhead=[24, 24], blocks=[[4, 12], [12, 4]])
                 if self.config.ema_start_iters is not None:
                     generator_ema = StageC(c_cond=1536, c_hidden=[1536, 1536], nhead=[24, 24], blocks=[[4, 12], [12, 4]])
-            elif self.config.model_version == "1.3B_Transformer":
+            elif self.config.model_version == "NTT":
                 generator = StageCTransformer()
                 if self.config.ema_start_iters is not None:
                     generator_ema = StageCTransformer()
@@ -318,12 +320,16 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
         return models.previewer(latents)
 
 
-def run(rank, config_file_path, n_gpu_per_node, dataset=None):
+def run(rank, config_file_path, n_gpu_per_node=1, dataset=None):
     warpcore = WurstCore(
         config_file_path=config_file_path,
-        device=rank
+        device="cuda"
     )
-    warpcore.__call__(rank, False, n_gpu_per_node=n_gpu_per_node, dataset=dataset)
+    if n_gpu_per_node == 1:
+        single_gpu = True
+    else:
+        single_gpu = False
+    warpcore.__call__(rank, single_gpu, n_gpu_per_node=n_gpu_per_node, dataset=dataset)
 
 def main():
     print("Launching Script")
@@ -342,6 +348,7 @@ def main():
         ),
         nprocs=torch.cuda.device_count(),
     )
+    
 
 if __name__ == "__main__":
     main()
