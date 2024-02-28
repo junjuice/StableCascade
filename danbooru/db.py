@@ -185,7 +185,7 @@ class PostTagRelation(BaseModel):
 
 tags = ManyToManyField(Tag, backref="_posts", through_model=PostTagRelation)
 tags.bind(Post, "_tags", set_attribute=True)
-embeds = None
+owl_embeds = None
 keys = []
 
 def load_db(db_file: str):
@@ -196,15 +196,15 @@ def load_db(db_file: str):
     PostTagRelation._meta.database = db
     db.connect()
 
-def setup(path="danbooru2023.db", embedding="embed.pt"):
+def setup(path="danbooru2023.db", embedding="embeds.pt"):
     if not os.path.isfile(path):
         download("https://huggingface.co/datasets/KBlueLeaf/danbooru2023-sqlite/resolve/main/danbooru2023.db", path)
     if not os.path.isfile(embedding):
         download("https://huggingface.co/junjuice0/test/resolve/main/embeds.pt", embedding)
     load_db("danbooru2023.db")
-    global embeds, keys
-    embeds: typing.OrderedDict = torch.load(embedding)
-    keys = list(embeds.keys())
+    global owl_embeds, keys
+    owl_embeds = torch.load(embedding)
+    keys = list(owl_embeds.keys())
 
 
 def get_quality_tag(score: int):
@@ -234,27 +234,33 @@ def get_tags(id, embedding: bool=False, formatting: bool=True, quality: bool=Tru
             [""]
     tags_raw = [x.name for x in post.tag_list_general + post.tag_list_character]
     quality_tag = get_quality_tag(post.score)
-    if quality_tag and quality:
-        tags = [embeds[quality_tag].unsqueeze(dim=0), ]
-    else:
-        tags = []
+    
     if embedding:
-        global embeds
+        global owl_embeds, keys
+        if quality_tag and quality:
+            tags = [owl_embeds[quality_tag].unsqueeze(dim=0), ]
+        else:
+            tags = []
         for tag in tags_raw:
-            if tag in keys():
-                tags.append(embeds[tag].unsqueeze(dim=0))
-            return torch.cat(tags, dim=0)
-    for tag in tags_raw:
-        if not tag in ignore:
-            tags.append(tag)
-    if formatting:
-        tag_str = ""
-        for tag in tags:
-            tag_str += tag + ", "
-        tag_str = tag_str.removesuffix(", ")
-        return tag_str
+            if tag in keys:
+                tags.append(owl_embeds[str(tag)].unsqueeze(dim=0))
+        return torch.cat(tags, dim=0)
     else:
-        return tags
+        if quality_tag and quality:
+            tags = [quality_tag, ]
+        else:
+            tags = []
+        for tag in tags_raw:
+            if not tag in ignore:
+                tags.append(tag)
+        if formatting:
+            tag_str = ""
+            for tag in tags:
+                tag_str += tag + ", "
+            tag_str = tag_str.removesuffix(", ")
+            return tag_str
+        else:
+            return tags
     
 def get_size(id: int):
     post = Post.get_by_id(id)
