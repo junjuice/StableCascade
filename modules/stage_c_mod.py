@@ -182,26 +182,22 @@ class StageCTransformer(nn.Module):
         self.decoder.token_emb = nn.Identity()
         self.final = LatentDecoder(self.in_dim, self.hidden_dim, self.patch_size)
         self.text_projection = nn.Linear(self.owl_dim["text"], self.hidden_dim)
-        self.text_pooled_projection = nn.Linear(self.owl_dim["text"], self.hidden_dim*self.owl_seq)
         self.vision_pooled_projection = nn.Linear(self.owl_dim["vision"], self.hidden_dim*self.owl_seq)
         self.owl_norm = nn.LayerNorm(self.hidden_dim, elementwise_affine=False, eps=1e-6)
 
     def gen_c_embeddings(self, clip_txt, clip_txt_pooled, clip_img):
         clip_txt = self.text_projection(clip_txt)
-        if len(clip_txt_pooled.shape) == 2:
-            clip_txt_pooled = clip_txt_pooled.unsqueeze(1)
         if len(clip_img.shape) == 2:
             clip_img = clip_img.unsqueeze(1)
-        clip_txt_pool = self.text_pooled_projection(clip_txt_pooled).view(clip_txt_pooled.size(0), clip_txt_pooled.size(1) * self.owl_seq, -1)
         clip_img = self.vision_pooled_projection(clip_img).view(clip_img.size(0), clip_img.size(1) * self.owl_seq, -1)
-        clip = torch.cat([clip_txt, clip_txt_pool, clip_img], dim=1)
+        clip = torch.cat([clip_txt, clip_img], dim=1)
         clip = self.owl_norm(clip)
         return clip
         
-    def forward(self, x: torch.Tensor, r: torch.Tensor, text_emb: torch.Tensor, text_emb_pooled: torch.Tensor, vision_emb_pooled: torch.Tensor):
+    def forward(self, x: torch.Tensor, r: torch.Tensor, text_emb: torch.Tensor, vision_emb_pooled: torch.Tensor):
         B, C, W, H = x.shape
 
-        emb = self.gen_c_embeddings(text_emb, text_emb_pooled, vision_emb_pooled)
+        emb = self.gen_c_embeddings(text_emb, vision_emb_pooled)
         emb = self.dropout1d(emb)
         patches = self.embedder(x, r)
         patches = self.decoder.forward(x=patches, context=emb, return_embeddings=True)
