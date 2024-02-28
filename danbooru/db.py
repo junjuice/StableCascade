@@ -232,20 +232,23 @@ def get_tags(id, embedding: bool=False, formatting: bool=True, quality: bool=Tru
             return ""
         else:
             [""]
-    tags_raw = [x.name for x in post.tag_list_general + post.tag_list_character]
+    
     quality_tag = get_quality_tag(post.score)
     
     if embedding:
+        tags_raw = [x.id for x in post.tag_list_general + post.tag_list_character]
         global owl_embeds, keys
         if quality_tag and quality:
             tags = [owl_embeds[quality_tag].unsqueeze(dim=0), ]
         else:
             tags = []
         for tag in tags_raw:
-            if tag in keys:
+            if str(tag) in keys:
+                print(str(tag))
                 tags.append(owl_embeds[str(tag)].unsqueeze(dim=0))
         return torch.cat(tags, dim=0)
     else:
+        tags_raw = [x.name for x in post.tag_list_general + post.tag_list_character]
         if quality_tag and quality:
             tags = [quality_tag, ]
         else:
