@@ -15,7 +15,8 @@ from torchtools.transforms import SmartCrop
 
 from modules.effnet import EfficientNetEncoder
 from modules.stage_c import StageC
-from modules.stage_c_mod_bitnet import StageCTransformer
+from modules.stage_c_mod_bitnet import StageCTransformer, TimestepEmbedder, LatentDecoder, LatentEncoder, BitFeedForward
+from modules.bitnet.attn import MultiheadAttention, MultiModalCrossAttention
 from modules.stage_c import ResBlock, AttnBlock, TimestepBlock, FeedForwardBlock
 from modules.previewer import Previewer
 
@@ -129,15 +130,22 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             ("__key__", db.get_tags, "captions"),
             ("__key__", db.get_embeddings, "embeddings")
         ]
+    
+    
 
     def get_conditions(self, batch: dict, models: Models, extras: Extras, is_eval=False, is_unconditional=False,
                        eval_image_embeds=False, return_fields=None):
         if is_unconditional:
-            embeddings = db.owl_embeds["uncond"].expand((len(batch["embeddings"]), 512))
+            embeddings = db.owl_embeds["uncond"].expand(len(batch["embeddings"]), 1, 512)
         else:
-            embeddings = batch["embeddings"]
+            embeddings = []
+            for x in batch["embeddings"]:
+                try:
+                    embeddings.append(torch.cat(x, dim=0))
+                except:
+                    embeddings.append(db.owl_embeds["uncond"].unsqueeze(0))
             embeddings = torch.nn.utils.rnn.pad_sequence(embeddings, batch_first=True, padding_value=0.)
-        return embeddings.to(self.device)
+        return {"text_emb": embeddings.to(self.device)}
 
     def setup_models(self, extras: Extras) -> Models:
         dtype = getattr(torch, self.config.dtype) if self.config.dtype else torch.float32
@@ -199,7 +207,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             generator_ema.to(dtype).to(self.device).eval().requires_grad_(False)
 
         if self.config.use_fsdp:
-            fsdp_auto_wrap_policy = ModuleWrapPolicy([ResBlock, AttnBlock, TimestepBlock, FeedForwardBlock])
+            fsdp_auto_wrap_policy = ModuleWrapPolicy([TimestepEmbedder, LatentDecoder, LatentEncoder, BitFeedForward, MultiheadAttention, MultiModalCrossAttention])
             generator = FSDP(generator, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
             if generator_ema is not None:
                 generator_ema = FSDP(generator_ema, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
@@ -238,7 +246,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             noised, noise, target, logSNR, noise_cond, loss_weight = extras.gdf.diffuse(latents, shift=1, loss_shift=1)
 
         with torch.cuda.amp.autocast(dtype=torch.bfloat16):
-            pred = models.generator(noised, noise_cond, conditions)
+            pred = models.generator(noised, noise_cond, **conditions)
             loss = nn.functional.mse_loss(pred, target, reduction='none').mean(dim=[1, 2, 3])
             loss_adjusted = (loss * loss_weight).mean() / self.config.grad_accum_steps
 
