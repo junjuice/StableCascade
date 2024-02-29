@@ -121,7 +121,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
         if not self.config.use_fsdp:
             base_size = 1127//self.n_gpu_per_node
             webdataset_paths = webdataset_paths[self.rank*base_size:(self.rank+1)*base_size]
-        return self.config.webdataset_path
+        return webdataset_paths
     
     def webdataset_preprocessors(self, extras: Extras):
         return [
@@ -298,16 +298,20 @@ def main():
     os.environ['MASTER_ADDR'] = 'localhost'
     os.environ['MASTER_PORT'] = '12355'
     config_file_path = sys.argv[1] if len(sys.argv) > 1 else None
+    gpus = torch.cuda.device_count()
 
     # RUN TRAINING
-    mp.spawn(
-        run,
-        (
-            config_file_path, 
-            torch.cuda.device_count()
-        ),
-        nprocs=torch.cuda.device_count(),
-    )
+    if gpus != 1:
+        mp.spawn(
+            run,
+            (
+                config_file_path, 
+                gpus
+            ),
+            nprocs=gpus,
+        )
+    else:
+        run(0, config_file_path)
     
 
 if __name__ == "__main__":

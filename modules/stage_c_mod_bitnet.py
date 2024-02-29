@@ -1,7 +1,8 @@
 import x_transformers
-from x_transformers.x_transformers import AttentionLayers
-from transformers.models.bert import BertModel, BertTokenizerFast
-from diffusers.models import AutoencoderKL
+from x_transformers.x_transformers import AttentionLayers, AbsolutePositionalEmbedding
+from torch import nn
+from zeta.nn.attention import MultiheadAttention
+from bitnet.bitffn import BitFeedForward
 import torch
 from torch import nn
 import math
@@ -10,6 +11,32 @@ import math
 def nonlinearity(x):
     # swish
     return x*torch.sigmoid(x)
+
+class BitnetCrossTransformer(nn.Module):
+    def __init__(self, dim: int, heads: int, depth: int, ff_mult=2, max_seq_len=64**2+1, *args, **kwargs):
+        super().__init__()
+        self.pos_emb = AbsolutePositionalEmbedding(dim, max_seq_len=max_seq_len)
+        
+        self.layers = nn.ModuleList([])
+        self.cross_layers = nn.ModuleList([])
+        self.ffn_layers = nn.ModuleList([])
+
+        for _ in range(depth):
+            self.layers.append(MultiheadAttention(dim, heads))
+            self.cross_layers.append(MultiheadAttention(dim, heads))
+            self.ffn_layers.append(
+                BitFeedForward(dim=dim, ff_mult=ff_mult)
+            )
+
+    def forward(self, x, context, immutable = []):
+        x = self.pos_emb(x)
+        temp = x[:, immutable, :]
+        for attn, cross_attn, ffn in zip(self.layers, self.cross_layers, self.ffn_layers):
+            x = attn(x, x, x) + x
+            x = cross_attn(x, context, context) + x
+            x = ffn(x) + x
+            x[:, immutable, :] = temp
+        return x
 
 
 class TimestepEmbedder(nn.Module):
@@ -138,15 +165,14 @@ class LatentDecoder(nn.Module):
 class StageCTransformer(nn.Module):
     def __init__(self, 
                  in_dim: int = 16, 
-                 hidden_dim: int = 1536, 
+                 hidden_dim: int = 2048, 
                  owl_text_dim: int = 512,
                  owl_vision_dim: int = 768,
-                 owl_seq: int = 4,
                  patch_size: int = 2, 
                  patch_expand_size: int = 1, 
                  max_size: int = 64,
                  depth: int = 24,
-                 num_heads: int = 12,
+                 num_heads: int = 16,
                  dropout: float = 0.,
                  ):
         super().__init__()
@@ -154,7 +180,6 @@ class StageCTransformer(nn.Module):
         self.in_dim = in_dim
         self.hidden_dim = hidden_dim
         self.owl_dim = {"text": owl_text_dim, "vision": owl_vision_dim}
-        self.owl_seq = owl_seq
         self.patch_size = patch_size
         self.patch_expand_size = patch_expand_size
         self.max_size = max_size
@@ -163,19 +188,12 @@ class StageCTransformer(nn.Module):
 
         self.embedder = LatentEncoder(in_dim=self.in_dim, out_dim=self.hidden_dim, patch_size=self.patch_size, expand_size=self.patch_expand_size)
         self.dropout1d = nn.Dropout1d(dropout)
-        self.decoder = x_transformers.TransformerWrapper(
-            num_tokens = 1000, 
-            max_seq_len = (self.max_size ** 2 + self.max_size + 2), 
-            attn_layers = AttentionLayers(
-                        dim = self.hidden_dim,
-                        depth = self.depth,
-                        heads = self.num_heads,
-                        layer_dropout = dropout,
-                        cross_attend = True,
-                        flash = True
-            )
+        self.decoder = BitnetCrossTransformer(
+            dim=self.hidden_dim,
+            heads=self.num_heads,
+            depth=self.depth,
+            max_seq_len=self.max_size**2+2
         )
-        self.decoder.token_emb = nn.Identity()
         self.final = LatentDecoder(self.in_dim, self.hidden_dim, self.patch_size)
         self.text_projection = nn.Linear(self.owl_dim["text"], self.hidden_dim)
         self.owl_norm = nn.LayerNorm(self.hidden_dim, elementwise_affine=False, eps=1e-6)
@@ -187,6 +205,6 @@ class StageCTransformer(nn.Module):
         emb = self.dropout1d(emb)
         emb = self.owl_norm(emb)
         patches = self.embedder(x, r)
-        patches = self.decoder.forward(x=patches, context=emb, return_embeddings=True)
+        patches = self.decoder.forward(x=patches, context=emb, immutable=[0, ])
         x = self.final(patches, (W, H))
         return x

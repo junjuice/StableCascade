@@ -196,11 +196,11 @@ def load_db(db_file: str):
     PostTagRelation._meta.database = db
     db.connect()
 
-def setup(path="danbooru2023.db", embedding="embeds.pt"):
+def setup(path="danbooru2023.db", embedding="embeds_bf16.pt"):
     if not os.path.isfile(path):
         download("https://huggingface.co/datasets/KBlueLeaf/danbooru2023-sqlite/resolve/main/danbooru2023.db", path)
     if not os.path.isfile(embedding):
-        download("https://huggingface.co/junjuice0/test/resolve/main/embeds.pt", embedding)
+        download("https://huggingface.co/junjuice0/test/resolve/main/embeds_bf16.pt", embedding)
     load_db("danbooru2023.db")
     global owl_embeds, keys
     owl_embeds = torch.load(embedding)
@@ -244,7 +244,6 @@ def get_tags(id, embedding: bool=False, formatting: bool=True, quality: bool=Tru
             tags = []
         for tag in tags_raw:
             if str(tag) in keys:
-                print(str(tag))
                 tags.append(owl_embeds[str(tag)].unsqueeze(dim=0))
         return torch.cat(tags, dim=0)
     else:
