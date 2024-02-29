@@ -1,7 +1,7 @@
 import x_transformers
 from x_transformers.x_transformers import AttentionLayers, AbsolutePositionalEmbedding
 from torch import nn
-from zeta.nn.attention import MultiheadAttention
+from modules.bitnet.attn import MultiheadAttention, MultiModalCrossAttention
 from bitnet.bitffn import BitFeedForward
 import torch
 from torch import nn
@@ -12,8 +12,8 @@ def nonlinearity(x):
     # swish
     return x*torch.sigmoid(x)
 
-class BitnetCrossTransformer(nn.Module):
-    def __init__(self, dim: int, heads: int, depth: int, ff_mult=2, max_seq_len=64**2+1, *args, **kwargs):
+class BitnetTransformerDecoder(nn.Module):
+    def __init__(self, dim: int, heads: int, depth: int, ff_mult=2, dropout=0., max_seq_len=64**2+1, *args, **kwargs):
         super().__init__()
         self.pos_emb = AbsolutePositionalEmbedding(dim, max_seq_len=max_seq_len)
         
@@ -22,20 +22,26 @@ class BitnetCrossTransformer(nn.Module):
         self.ffn_layers = nn.ModuleList([])
 
         for _ in range(depth):
-            self.layers.append(MultiheadAttention(dim, heads))
-            self.cross_layers.append(MultiheadAttention(dim, heads))
+            self.layers.append(MultiheadAttention(dim, heads, dropout=dropout))
+            self.cross_layers.append(MultiModalCrossAttention(dim, heads, dim, dropout=dropout))
             self.ffn_layers.append(
-                BitFeedForward(dim=dim, ff_mult=ff_mult)
+                nn.Sequential(
+                    BitFeedForward(dim=dim, ff_mult=ff_mult),
+                    nn.LayerNorm(dim)
+                )
             )
 
-    def forward(self, x, context, immutable = []):
-        x = self.pos_emb(x)
-        temp = x[:, immutable, :]
+    def forward(self, x, context, immutable = None):
+        pos_emb = self.pos_emb(x).expand(x.shape)
+        x = x + pos_emb
+        if immutable:
+            temp = x[:, immutable, :]
         for attn, cross_attn, ffn in zip(self.layers, self.cross_layers, self.ffn_layers):
             x = attn(x, x, x) + x
-            x = cross_attn(x, context, context) + x
+            x = cross_attn(x, context) + x
             x = ffn(x) + x
-            x[:, immutable, :] = temp
+            if immutable:
+                x[:, immutable, :] = temp
         return x
 
 
@@ -188,7 +194,7 @@ class StageCTransformer(nn.Module):
 
         self.embedder = LatentEncoder(in_dim=self.in_dim, out_dim=self.hidden_dim, patch_size=self.patch_size, expand_size=self.patch_expand_size)
         self.dropout1d = nn.Dropout1d(dropout)
-        self.decoder = BitnetCrossTransformer(
+        self.decoder = BitnetTransformerDecoder(
             dim=self.hidden_dim,
             heads=self.num_heads,
             depth=self.depth,
@@ -205,6 +211,6 @@ class StageCTransformer(nn.Module):
         emb = self.dropout1d(emb)
         emb = self.owl_norm(emb)
         patches = self.embedder(x, r)
-        patches = self.decoder.forward(x=patches, context=emb, immutable=[0, ])
+        patches = self.decoder(x=patches, context=emb, immutable=0)
         x = self.final(patches, (W, H))
         return x

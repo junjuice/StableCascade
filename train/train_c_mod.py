@@ -15,7 +15,7 @@ from torchtools.transforms import SmartCrop
 
 from modules.effnet import EfficientNetEncoder
 from modules.stage_c import StageC
-from modules.stage_c_mod import StageCTransformer
+from modules.stage_c_mod_bitnet import StageCTransformer
 from modules.stage_c import ResBlock, AttnBlock, TimestepBlock, FeedForwardBlock
 from modules.previewer import Previewer
 
@@ -137,7 +137,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
         else:
             embeddings = batch["embeddings"]
             embeddings = torch.nn.utils.rnn.pad_sequence(embeddings, batch_first=True, padding_value=0.)
-        return embeddings
+        return embeddings.to(self.device)
 
     def setup_models(self, extras: Extras) -> Models:
         dtype = getattr(torch, self.config.dtype) if self.config.dtype else torch.float32
