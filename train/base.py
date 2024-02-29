@@ -132,7 +132,7 @@ class DataCore(WarpCore):
         # SETUP DATALOADER
         real_batch_size = self.config.batch_size // (self.world_size * self.config.grad_accum_steps)
         dataloader = DataLoader(
-            dataset, batch_size=real_batch_size, num_workers=2, pin_memory=True,
+            dataset, batch_size=real_batch_size, num_workers=os.cpu_count()//self.n_gpu_per_node, pin_memory=True,
             collate_fn=identity if self.config.multi_aspect_ratio is not None else None
         )
         if self.is_main_node:
