@@ -239,13 +239,13 @@ def get_tags(id, embedding: bool=False, formatting: bool=True, quality: bool=Tru
         tags_raw = [x.id for x in post.tag_list_general + post.tag_list_character]
         global owl_embeds, keys
         if quality_tag and quality:
-            tags = [owl_embeds[quality_tag].unsqueeze(dim=0), ]
+            tags = [owl_embeds[quality_tag].unsqueeze(dim=0).detach(), ]
         else:
             tags = []
         for tag in tags_raw:
             if str(tag) in keys:
-                tags.append(owl_embeds[str(tag)].unsqueeze(dim=0))
-        return torch.cat(tags, dim=0).detach()
+                tags.append(owl_embeds[str(tag)].unsqueeze(dim=0).detach())
+        return tags
     else:
         tags_raw = [x.name for x in post.tag_list_general + post.tag_list_character]
         if quality_tag and quality:

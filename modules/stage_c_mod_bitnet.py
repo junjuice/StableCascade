@@ -19,27 +19,27 @@ class BitnetTransformerDecoder(nn.Module):
         
         self.layers = nn.ModuleList([])
         self.cross_layers = nn.ModuleList([])
+        self.ln_layers = nn.ModuleList([])
         self.ffn_layers = nn.ModuleList([])
 
         for _ in range(depth):
             self.layers.append(MultiheadAttention(dim, heads, dropout=dropout))
             self.cross_layers.append(MultiModalCrossAttention(dim, heads, dim, dropout=dropout))
-            self.ffn_layers.append(
-                nn.Sequential(
-                    BitFeedForward(dim=dim, ff_mult=ff_mult),
-                    nn.LayerNorm(dim)
-                )
-            )
+            self.ln_layers.append(nn.ModuleList([nn.LayerNorm(dim), nn.LayerNorm(dim), nn.LayerNorm(dim)]))
+            self.ffn_layers.append(BitFeedForward(dim=dim, ff_mult=ff_mult))
 
     def forward(self, x, context, immutable = None):
         pos_emb = self.pos_emb(x).expand(x.shape)
         x = x + pos_emb
         if immutable:
             temp = x[:, immutable, :]
-        for attn, cross_attn, ffn in zip(self.layers, self.cross_layers, self.ffn_layers):
+        for attn, cross_attn, (ln1, ln2, ln3), ffn in zip(self.layers, self.cross_layers, self.ln_layers, self.ffn_layers):
             x = attn(x, x, x) + x
+            x = ln1(x)
             x = cross_attn(x, context) + x
+            x = ln2(x)
             x = ffn(x) + x
+            x = ln3(x)
             if immutable:
                 x[:, immutable, :] = temp
         return x
@@ -92,9 +92,9 @@ class LatentEncoder(nn.Module):
         self.out_dim = out_dim
         self.patch_size = patch_size
         self.expand_size = expand_size
-        self.soi = nn.Parameter(torch.randn(self.out_dim), requires_grad=False)
-        self.nl = nn.Parameter(torch.randn(self.out_dim), requires_grad=False)
-        self.eoi = nn.Parameter(torch.randn(self.out_dim), requires_grad=False)
+        self.soi = nn.Parameter(torch.randn(self.out_dim))
+        self.nl = nn.Parameter(torch.randn(self.out_dim))
+        self.eoi = nn.Parameter(torch.randn(self.out_dim))
 
         self.in_norm = nn.BatchNorm2d(num_features=self.in_dim)
         self.conv = nn.Conv2d(
@@ -117,8 +117,6 @@ class LatentEncoder(nn.Module):
         )
         padding = nn.ZeroPad2d((0, pad_size[1], 0, pad_size[0]))
         x = padding(x)
-        if len(t.shape) == 1:
-            t = t.repeat(B, 1)
         B, C, H, W = x.shape
         x = self.in_norm(x)
         x = self.conv(x)
@@ -171,14 +169,14 @@ class LatentDecoder(nn.Module):
 class StageCTransformer(nn.Module):
     def __init__(self, 
                  in_dim: int = 16, 
-                 hidden_dim: int = 2048, 
+                 hidden_dim: int = 1920, 
                  owl_text_dim: int = 512,
                  owl_vision_dim: int = 768,
                  patch_size: int = 2, 
                  patch_expand_size: int = 1, 
                  max_size: int = 64,
-                 depth: int = 24,
-                 num_heads: int = 16,
+                 depth: int = 20,
+                 num_heads: int = 12,
                  dropout: float = 0.,
                  ):
         super().__init__()
