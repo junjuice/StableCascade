@@ -130,6 +130,8 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             ("__key__", db.get_tags, "captions"),
             ("__key__", db.get_embeddings, "embeddings")
         ]
+    
+    
 
     def get_conditions(self, batch: dict, models: Models, extras: Extras, is_eval=False, is_unconditional=False,
                        eval_image_embeds=False, return_fields=None):
@@ -204,7 +206,7 @@ class WurstCore(TrainingCore, DataCore, WarpCore):
             generator_ema.to(dtype).to(self.device).eval().requires_grad_(False)
 
         if self.config.use_fsdp:
-            fsdp_auto_wrap_policy = ModuleWrapPolicy([LatentDecoder, LatentEncoder, BitFeedForward, MultiheadAttention, MultiModalCrossAttention])
+            fsdp_auto_wrap_policy = ModuleWrapPolicy([TimestepEmbedder, LatentDecoder, LatentEncoder, BitFeedForward, MultiheadAttention, MultiModalCrossAttention])
             generator = FSDP(generator, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
             if generator_ema is not None:
                 generator_ema = FSDP(generator_ema, **self.fsdp_defaults, auto_wrap_policy=fsdp_auto_wrap_policy, device_id=self.device)
